@@ -77,9 +77,14 @@ uint8_t PA_TABLE_433[8] {0x12,0x0E,0x1D,0x34,0x60,0x84,0xC8,0xC0,};             
 uint8_t PA_TABLE_868[10] {0x03,0x17,0x1D,0x26,0x37,0x50,0x86,0xCD,0xC5,0xC0,};  //779 - 899.99
 //                        -30  -20  -15  -10  -6    0    5    7    10   11
 uint8_t PA_TABLE_915[10] {0x03,0x0E,0x1E,0x27,0x38,0x8E,0x84,0xCC,0xC3,0xC0,};  //900 - 928
-
-
-void ELECHOUSE_CC1101::SpiBegin(void)
+/****************************************************************
+*FUNCTION NAME:SpiStart
+*FUNCTION     :spi communication start
+*INPUT        :none
+*OUTPUT       :none
+*HISTORY      : PLN 11/2025 - Moved SPI pin setup before SPI begin
+****************************************************************/
+void ELECHOUSE_CC1101::SpiStart(void)
 {
   // initialize the SPI pins
   pinMode(SCK_PIN, OUTPUT);
@@ -87,32 +92,17 @@ void ELECHOUSE_CC1101::SpiBegin(void)
   pinMode(MISO_PIN, INPUT);
   pinMode(SS_PIN, OUTPUT);
 
+  // Generate SIDLE strobe on CSN leading edge
+  digitalWrite(SS_PIN, HIGH);
+  digitalWrite(SCK_PIN, HIGH);
+  digitalWrite(MOSI_PIN, LOW);
+ 
   // enable SPI
   #ifdef ESP32
   SPI.begin(SCK_PIN, MISO_PIN, MOSI_PIN, SS_PIN);
   #else
   SPI.begin();
   #endif
-}
-void ELECHOUSE_CC1101::SpiStop(void)
-{
-  digitalWrite(SS_PIN, HIGH);
-  SPI.endTransaction();
-}
-
-/****************************************************************
-*FUNCTION NAME:SpiStart
-*FUNCTION     :spi communication start
-*INPUT        :none
-*OUTPUT       :none
-****************************************************************/
-void ELECHOUSE_CC1101::SpiStart(void)
-{
-  digitalWrite(SS_PIN, HIGH);
-  SPI.endTransaction();
-
-  SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
-  digitalWrite(SS_PIN, LOW);
 }
 /****************************************************************
 *FUNCTION NAME:SpiEnd
@@ -123,6 +113,7 @@ void ELECHOUSE_CC1101::SpiStart(void)
 void ELECHOUSE_CC1101::SpiEnd(void)
 {
   // disable SPI
+  SPI.endTransaction();
   SPI.end();
 }
 /****************************************************************
@@ -169,18 +160,15 @@ void ELECHOUSE_CC1101::Reset (void)
 *FUNCTION     :CC1101 initialization
 *INPUT        :none
 *OUTPUT       :none
+*HISTORY      : PLN 11/2025 - SpiEnd moved before RegCongigSettings
 ****************************************************************/
 void ELECHOUSE_CC1101::Init(void)
 {
   setSpi();
-  SpiBegin();
   SpiStart();                   //spi initialization
-  //digitalWrite(SS_PIN, HIGH);
-  //digitalWrite(SCK_PIN, HIGH);
-  //digitalWrite(MOSI_PIN, LOW);
-  Reset();                    //CC1101 reset
-  RegConfigSettings();            //CC1101 register config
-  SpiStop();
+  Reset();                      //CC1101 reset
+  SpiEnd();                     //spi disable
+  RegConfigSettings();          //CC1101 register config
 }
 /****************************************************************
 *FUNCTION NAME:SpiWriteReg
@@ -191,10 +179,12 @@ void ELECHOUSE_CC1101::Init(void)
 void ELECHOUSE_CC1101::SpiWriteReg(byte addr, byte value)
 {
   SpiStart();
+  digitalWrite(SS_PIN, LOW);
   while(digitalRead(MISO_PIN));
   SPI.transfer(addr);
   SPI.transfer(value); 
-  SpiStop();
+  digitalWrite(SS_PIN, HIGH);
+  SpiEnd();
 }
 /****************************************************************
 *FUNCTION NAME:SpiWriteBurstReg
@@ -207,13 +197,15 @@ void ELECHOUSE_CC1101::SpiWriteBurstReg(byte addr, byte *buffer, byte num)
   byte i, temp;
   SpiStart();
   temp = addr | WRITE_BURST;
+  digitalWrite(SS_PIN, LOW);
   while(digitalRead(MISO_PIN));
   SPI.transfer(temp);
   for (i = 0; i < num; i++)
   {
   SPI.transfer(buffer[i]);
   }
-  SpiStop();
+  digitalWrite(SS_PIN, HIGH);
+  SpiEnd();
 }
 /****************************************************************
 *FUNCTION NAME:SpiStrobe
@@ -224,9 +216,11 @@ void ELECHOUSE_CC1101::SpiWriteBurstReg(byte addr, byte *buffer, byte num)
 void ELECHOUSE_CC1101::SpiStrobe(byte strobe)
 {
   SpiStart();
+  digitalWrite(SS_PIN, LOW);
   while(digitalRead(MISO_PIN));
   SPI.transfer(strobe);
-  SpiStop();
+  digitalWrite(SS_PIN, HIGH);
+  SpiEnd();
 }
 /****************************************************************
 *FUNCTION NAME:SpiReadReg
@@ -239,10 +233,12 @@ byte ELECHOUSE_CC1101::SpiReadReg(byte addr)
   byte temp, value;
   SpiStart();
   temp = addr| READ_SINGLE;
+  digitalWrite(SS_PIN, LOW);
   while(digitalRead(MISO_PIN));
   SPI.transfer(temp);
   value=SPI.transfer(0);
-  SpiStop();
+  digitalWrite(SS_PIN, HIGH);
+  SpiEnd();
   return value;
 }
 
@@ -257,13 +253,15 @@ void ELECHOUSE_CC1101::SpiReadBurstReg(byte addr, byte *buffer, byte num)
   byte i,temp;
   SpiStart();
   temp = addr | READ_BURST;
+  digitalWrite(SS_PIN, LOW);
   while(digitalRead(MISO_PIN));
   SPI.transfer(temp);
   for(i=0;i<num;i++)
   {
   buffer[i]=SPI.transfer(0);
   }
-  SpiStop();
+  digitalWrite(SS_PIN, HIGH);
+  SpiEnd();
 }
 
 /****************************************************************
@@ -277,10 +275,12 @@ byte ELECHOUSE_CC1101::SpiReadStatus(byte addr)
   byte value,temp;
   SpiStart();
   temp = addr | READ_BURST;
+  digitalWrite(SS_PIN, LOW);
   while(digitalRead(MISO_PIN));
   SPI.transfer(temp);
   value=SPI.transfer(0);
-  SpiStop();
+  digitalWrite(SS_PIN, HIGH);
+  SpiEnd();
   return value;
 }
 /****************************************************************
@@ -617,14 +617,16 @@ clb4[1]=e;
 *FUNCTION     :Test Spi connection and return 1 when true.
 *INPUT        :none
 *OUTPUT       :none
+*HISTORY     : PLN 11/2025 - Changed to read status register
 ****************************************************************/
-bool ELECHOUSE_CC1101::getCC1101(void){
-setSpi();
-if (SpiReadStatus(0x31)>0){
-return 1;
-}else{
-return 0;
-}
+byte ELECHOUSE_CC1101::getCC1101(void){
+  setSpi();
+  byte status = SpiReadStatus(0x31);
+  if (status > 0){
+    return status;
+  }else{
+    return 0;
+  }
 }
 /****************************************************************
 *FUNCTION NAME:getMode
