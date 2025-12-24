@@ -13,6 +13,7 @@
 cc1101 Driver for RC Switch. Mod by Little Satan. With permission to modify and publish Wilson Shen (ELECHOUSE).
 ----------------------------------------------------------------------------------------------------------------
 */
+#include <SPI.h>
 #include "ELECHOUSE_CC1101_SRC_DRV.h"
 #include <Arduino.h>
 
@@ -41,7 +42,7 @@ byte SS_PIN_M[max_modul];
 byte GDO0_M[max_modul];
 byte GDO2_M[max_modul];
 byte gdo_set=0;
-bool __spi = 0;
+bool spi = 0;
 bool ccmode = 0;
 float MHz = 433.92;
 byte m4RxBw = 0;
@@ -77,50 +78,26 @@ uint8_t PA_TABLE_868[10] {0x03,0x17,0x1D,0x26,0x37,0x50,0x86,0xCD,0xC5,0xC0,};  
 //                        -30  -20  -15  -10  -6    0    5    7    10   11
 uint8_t PA_TABLE_915[10] {0x03,0x0E,0x1E,0x27,0x38,0x8E,0x84,0xCC,0xC3,0xC0,};  //900 - 928
 
-/****************************************************************
-*FUNCTION NAME:setBeginEndLogic
-*FUNCTION     :set a new state to Begin/End logic, in this logic SPI class uses SPI.begin(...) and SPI.end() logic for backwards compatibility
-*INPUT        :state: true or false
-*OUTPUT       :none
-****************************************************************/
-  void ELECHOUSE_CC1101::setBeginEndLogic(bool state) {
-    _begin_end_logic = state;
-  }
 
-
-/****************************************************************
-*FUNCTION NAME:getBeginEndLogic
-*FUNCTION     :get the state to Begin/End logic, in this logic SPI class uses SPI.begin(...) and SPI.end() logic for backwards compatibility
-*INPUT        :state: true or false
-*OUTPUT       :none
-****************************************************************/
-  bool ELECHOUSE_CC1101::getBeginEndLogic() {
-    return _begin_end_logic;
-  }
-
-/****************************************************************
-*FUNCTION NAME:setSPIinstance
-*FUNCTION     :Set the SPI Instance to use if needed to share SPI Bus with other devices
-*INPUT        :none
-*OUTPUT       :none
-****************************************************************/
-void ELECHOUSE_CC1101::setSPIinstance(SPIClass* sspi) 
+void ELECHOUSE_CC1101::SpiBegin(void)
 {
-  // Set the SPI instance to use if needed to share SPI Bus with other devices
-  cc_spi=sspi;
+  // initialize the SPI pins
+  pinMode(SCK_PIN, OUTPUT);
+  pinMode(MOSI_PIN, OUTPUT);
+  pinMode(MISO_PIN, INPUT);
+  pinMode(SS_PIN, OUTPUT);
+
+  // enable SPI
+  #ifdef ESP32
+  SPI.begin(SCK_PIN, MISO_PIN, MOSI_PIN, SS_PIN);
+  #else
+  SPI.begin();
+  #endif
 }
-/****************************************************************
-*FUNCTION NAME:getSPIinstance
-*FUNCTION     :Gives the SPI instance in use by CC1101, if none was set, will set the library SPI instance
-*INPUT        :none
-*OUTPUT       :none
-****************************************************************/
-SPIClass* ELECHOUSE_CC1101::getSPIinstance()
+void ELECHOUSE_CC1101::SpiStop(void)
 {
-  if(cc_spi==nullptr) {
-    cc_spi=&_cc_spi;
-  }
-  return cc_spi;
+  digitalWrite(SS_PIN, HIGH);
+  SPI.endTransaction();
 }
 
 /****************************************************************
@@ -131,15 +108,11 @@ SPIClass* ELECHOUSE_CC1101::getSPIinstance()
 ****************************************************************/
 void ELECHOUSE_CC1101::SpiStart(void)
 {
-  //End transaction to ensure openin a new session with the right SPISettings
   digitalWrite(SS_PIN, HIGH);
-  cc_spi->endTransaction();
-  if(_begin_end_logic) cc_spi->end();
-  if(_begin_end_logic) cc_spi->begin(SCK_PIN,MISO_PIN,MOSI_PIN,SS_PIN);
-  digitalWrite(SS_PIN, LOW);
-  cc_spi->beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
-  
+  SPI.endTransaction();
 
+  SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
+  digitalWrite(SS_PIN, LOW);
 }
 /****************************************************************
 *FUNCTION NAME:SpiEnd
@@ -150,10 +123,7 @@ void ELECHOUSE_CC1101::SpiStart(void)
 void ELECHOUSE_CC1101::SpiEnd(void)
 {
   // disable SPI
-  cc_spi->endTransaction();
-  digitalWrite(SS_PIN, HIGH);
-  if(_begin_end_logic) cc_spi->end();
-
+  SPI.end();
 }
 /****************************************************************
 *FUNCTION NAME: GDO_Set()
@@ -184,14 +154,13 @@ void ELECHOUSE_CC1101::GDO0_Set (void)
 ****************************************************************/
 void ELECHOUSE_CC1101::Reset (void)
 {
-  SpiStart();
 	digitalWrite(SS_PIN, LOW);
 	delay(1);
 	digitalWrite(SS_PIN, HIGH);
 	delay(1);
 	digitalWrite(SS_PIN, LOW);
 	while(digitalRead(MISO_PIN));
-  cc_spi->transfer(CC1101_SRES);
+  SPI.transfer(CC1101_SRES);
   while(digitalRead(MISO_PIN));
 	digitalWrite(SS_PIN, HIGH);
 }
@@ -203,23 +172,15 @@ void ELECHOUSE_CC1101::Reset (void)
 ****************************************************************/
 void ELECHOUSE_CC1101::Init(void)
 {
-  // check if SPI Pins are set
   setSpi();
-  pinMode(SS_PIN, OUTPUT);
-  // If there were no different SPI Instance, use This lib instance
-  if(cc_spi==nullptr || _begin_end_logic) {
-    DEBUG_CC1101("CC1101: Null pointer SPI instance or Begin/end");
-    _begin_end_logic=true;
-    cc_spi=&_cc_spi;
-    cc_spi->begin(SCK_PIN,MISO_PIN,MOSI_PIN,SS_PIN);
-    delay(1);
-  } else { DEBUG_CC1101("CC1101: Using other instance"); }
-
-  SpiStart();                   //Start SPI Transaction
-  digitalWrite(SS_PIN, HIGH);
-  Reset();                      //CC1101 reset
-  RegConfigSettings();          //CC1101 register config
-  SpiEnd();                     //Stops SPI Transaction
+  SpiBegin();
+  SpiStart();                   //spi initialization
+  //digitalWrite(SS_PIN, HIGH);
+  //digitalWrite(SCK_PIN, HIGH);
+  //digitalWrite(MOSI_PIN, LOW);
+  Reset();                    //CC1101 reset
+  RegConfigSettings();            //CC1101 register config
+  SpiStop();
 }
 /****************************************************************
 *FUNCTION NAME:SpiWriteReg
@@ -231,10 +192,9 @@ void ELECHOUSE_CC1101::SpiWriteReg(byte addr, byte value)
 {
   SpiStart();
   while(digitalRead(MISO_PIN));
-  cc_spi->transfer(addr);
-  cc_spi->transfer(value); 
-  SpiEnd();
-  DEBUG_CC1101("Write reg addr: 0x" + String(addr,HEX) + "=0x" + String(value,HEX));
+  SPI.transfer(addr);
+  SPI.transfer(value); 
+  SpiStop();
 }
 /****************************************************************
 *FUNCTION NAME:SpiWriteBurstReg
@@ -248,15 +208,12 @@ void ELECHOUSE_CC1101::SpiWriteBurstReg(byte addr, byte *buffer, byte num)
   SpiStart();
   temp = addr | WRITE_BURST;
   while(digitalRead(MISO_PIN));
-  DEBUG_CC11012("\nWrite burst addr: 0x" + String(temp,HEX) + "=");
-  cc_spi->transfer(temp);
+  SPI.transfer(temp);
   for (i = 0; i < num; i++)
   {
-  cc_spi->transfer(buffer[i]);
-  DEBUG_CC11012(" 0x" + String(buffer[i],HEX));
+  SPI.transfer(buffer[i]);
   }
-  DEBUG_CC1101()
-  SpiEnd();
+  SpiStop();
 }
 /****************************************************************
 *FUNCTION NAME:SpiStrobe
@@ -268,9 +225,8 @@ void ELECHOUSE_CC1101::SpiStrobe(byte strobe)
 {
   SpiStart();
   while(digitalRead(MISO_PIN));
-  cc_spi->transfer(strobe);
-  SpiEnd();
-  DEBUG_CC1101("Write Strobe: 0x" + String(strobe,HEX));
+  SPI.transfer(strobe);
+  SpiStop();
 }
 /****************************************************************
 *FUNCTION NAME:SpiReadReg
@@ -284,10 +240,9 @@ byte ELECHOUSE_CC1101::SpiReadReg(byte addr)
   SpiStart();
   temp = addr| READ_SINGLE;
   while(digitalRead(MISO_PIN));
-  cc_spi->transfer(temp);
-  value=cc_spi->transfer(0);
-  SpiEnd();
-  DEBUG_CC1101("Reading addr: 0x" + String(addr,HEX) + " = 0x" + String(value,HEX));
+  SPI.transfer(temp);
+  value=SPI.transfer(0);
+  SpiStop();
   return value;
 }
 
@@ -303,15 +258,12 @@ void ELECHOUSE_CC1101::SpiReadBurstReg(byte addr, byte *buffer, byte num)
   SpiStart();
   temp = addr | READ_BURST;
   while(digitalRead(MISO_PIN));
-  DEBUG_CC11012("\nReading addr: 0x" + String(temp,HEX) + " = ");
-  cc_spi->transfer(temp);
+  SPI.transfer(temp);
   for(i=0;i<num;i++)
   {
-  buffer[i]=cc_spi->transfer(0);
-  DEBUG_CC11012(" " + String(buffer[i],HEX));
+  buffer[i]=SPI.transfer(0);
   }
-  DEBUG_CC1101()
-  SpiEnd();
+  SpiStop();
 }
 
 /****************************************************************
@@ -326,10 +278,9 @@ byte ELECHOUSE_CC1101::SpiReadStatus(byte addr)
   SpiStart();
   temp = addr | READ_BURST;
   while(digitalRead(MISO_PIN));
-  cc_spi->transfer(temp);
-  value=cc_spi->transfer(0);
-  SpiEnd();
-  DEBUG_CC1101("Reading Reg addr: 0x" + String(addr,HEX) + " = 0x" + String(value,HEX));
+  SPI.transfer(temp);
+  value=SPI.transfer(0);
+  SpiStop();
   return value;
 }
 /****************************************************************
@@ -339,7 +290,7 @@ byte ELECHOUSE_CC1101::SpiReadStatus(byte addr)
 *OUTPUT       :none
 ****************************************************************/
 void ELECHOUSE_CC1101::setSpi(void){
-  if (__spi == 0){
+  if (spi == 0){
   #if defined __AVR_ATmega168__ || defined __AVR_ATmega328P__
   SCK_PIN = 13; MISO_PIN = 12; MOSI_PIN = 11; SS_PIN = 10;
   #elif defined __AVR_ATmega1280__ || defined __AVR_ATmega2560__
@@ -360,7 +311,7 @@ void ELECHOUSE_CC1101::setSpi(void){
 *OUTPUT       :none
 ****************************************************************/
 void ELECHOUSE_CC1101::setSpiPin(byte sck, byte miso, byte mosi, byte ss){
-  __spi = 1;
+  spi = 1;
   SCK_PIN = sck;
   MISO_PIN = miso;
   MOSI_PIN = mosi;
@@ -373,7 +324,7 @@ void ELECHOUSE_CC1101::setSpiPin(byte sck, byte miso, byte mosi, byte ss){
 *OUTPUT       :none
 ****************************************************************/
 void ELECHOUSE_CC1101::addSpiPin(byte sck, byte miso, byte mosi, byte ss, byte modul){
-  __spi = 1;
+  spi = 1;
   SCK_PIN_M[modul] = sck;
   MISO_PIN_M[modul] = miso;
   MOSI_PIN_M[modul] = mosi;
@@ -668,14 +619,11 @@ clb4[1]=e;
 *OUTPUT       :none
 ****************************************************************/
 bool ELECHOUSE_CC1101::getCC1101(void){
-  setSpi();
-  byte val=SpiReadStatus(0x31);
-  if (val>0){
-    DEBUG_CC1101("getCC1101 result: 0x" + String(val,HEX) + " -> Ok");
-    return 1;
-  }else{
-    DEBUG_CC1101("getCC1101 result: 0x" + String(val,HEX) + " -> Not Found");
-    return 0;
+setSpi();
+if (SpiReadStatus(0x31)>0){
+return 1;
+}else{
+return 0;
 }
 }
 /****************************************************************
