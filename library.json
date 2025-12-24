@@ -4,7 +4,7 @@
   "keywords": "rf, radio, wireless, cc1101",
   "authors":
   {
-    "name": "Little Satan"
+    "name": "Melkboertje"
   },
   "repository":
   {
@@ -17,3 +17,4 @@
   ],
   "platforms": "*"
 }
+
